@@ -73,47 +73,46 @@ function authKey() {
 
 function djMode (callback) {
 	this.mode = null;
-	this.mode_text = null;
+	this.mode_text = "There are no special DJ modes enabled. ";
+	this.queue_text = "There is no queue to DJ. ";
 	this.use_queue = false;
 	this.setMode = function setMode( new_mode ) {
 		if (new_mode.match('play[0-9]+') ) {
 			this.limit = Math.floor(new_mode.substr(4));
 			this.limit_units = this.limit == 1 ? "song" : "songs";
 			this.mode = new_mode;
-			this.mode_text = "DJs will now be removed after playing "+this.limit+" "+this.limit_units;
+			this.mode_text = "DJs will now be removed after playing "+this.limit+" "+this.limit_units+". ";
 		}
 		if (new_mode.match('queue') ) {
 			this.use_queue = true;
 			this.queue = [];
-			callback({"success":true});
+			this.queue_text = "There is a queue to DJ, say 'add' to be added. ";
 		}
 		if (new_mode.match('ffa') ) {
 			this.use_queue = false;
 			this.queue = false;
-			callback({"success":true});
+			this.queue_text = "There is no queue to DJ. ";
 		}
 	}
 	this.addToQueue = function addToQueue( userid ) {
 		if (this.use_queue) {
 			this.queue.push(userid);
-		} else {
-			callback({"success":false});
 		}
 	}
 	this.getNextInLine = function getNextInLine() {
 		if (this.use_queue && this.queue.length > 0) {
 			var next = this.queue[0];
 			this.queue.shift();
-			callback({"success":true, "next":next});
+			return next;
 		}
 	}
 	this.getPositionInLine = function getPositionInLine( userid ) {
 		if (this.use_queue && this.queue.length > 0) {
 			var position = this.queue.indexOf(userid);
 			if (position >= 0 ) {
-				callback(position+1);
+				return position+1;
 			} else {
-				callback({"success":false});
+				return false;
 			}
 		}
 	}
@@ -121,9 +120,9 @@ function djMode (callback) {
 		var position = this.queue.indexOf(userid);
 		if (position >= 0) {
 			this.queue.splice(position);
-			callback({"success":true, "new_queue_size":this.queue.length});
+			return this.queue.length;
 		} else {
-			callback({"success":false});
+			return false;
 		}
 	}
 }
@@ -148,28 +147,27 @@ function getCurrentSong(callback) {
 }
 function getShortenedUserIds(callback) {
 	bot.roomInfo(true, function(data) {
-		list = {};
+		list = [];
 		for(i=0;i<data.users.length;i++) {
-			list[i] = (data.users[i].userid.substr(0,6));
+			list.push(data.users[i].userid.substr(0,6));
 		}
 		callback(list);
 	});
 }
 
 
-function heartBeat() {
+function heartBeat(callback) {
 	var options = { bufferType: 'buffer', url:apibase+'heartbeat.php?key='+authKey()+'&bot=theSloth' };
 	http.get(options, function(error, res) {
 		if (error) {
 			myLog('addDj','heartBeat() - Error connecting to '+options['url']);
-
 		} else {
-			callback(res)
+			myLog('heartBeat()', res.buffer);
 		}
 	});
 }
 bot.on('registered', function(data) {
-
+	heartBeat();
 });
 bot.on('newsong', function(data) { 
 	getCurrentSong( function(now_playing) {
@@ -178,20 +176,69 @@ bot.on('newsong', function(data) {
 		}
 
 	});
-
 	heartBeat();
 });
 bot.on('endsong', function(data) {
+	heartBeat();
 });
 bot.on('roomChanged', function(data) {
+	heartBeat();
 });
 bot.on('new_moderator', function (data) {
+	heartBeat();
 });
 bot.on('add_dj', function(data) {
 	heartBeat();
 });
 bot.on('rem_dj', function(data) {
+	heartBeat();
 });
 bot.on('speak', function (data) {
-
+	heartBeat();
+});
+bot.on('pmmed', function (data) {
+	heartBeat();
+	var name = data.name;
+	var text = data.text;
+	var userid = data.userid;
+	if(text.match(/^!who$/i)) {
+		getCurrentSong(function(song) {
+			if (song.showdate) {
+				getShortenedUserIds(function(userlist) {
+					var options = {bufferType: 'string', url:apibase+'getUsersAtShow.php?key='+authKey()+'&date='+song.showdate+'&u='+userlist.join() };
+					http.get(options, function(error, res) {
+						if (error) {
+							myLog('speak', '!who - Error connecting to '+options['url']);
+						} else {
+							// todo return json + validate for success
+							console.log(res.buffer);
+						}
+					});
+				}); 
+			} else {
+				console.log("I don't know the showdate");
+			}
+		});
+	}
+	if(text.match(/^!mode/i)) {
+		bot.mode = !bot.mode ? new djMode() : bot.mode;
+		myLog('mode', bot.mode.mode_text+bot.mode.queue_text);
+	}
+	if(text.match(/^!mode:/i)) {
+		var new_mode = text.substr(6);
+		//myLog('!mode', 'New mode: '+new_mode);
+		bot.mode = !bot.mode ? new djMode() : bot.mode;
+		bot.mode.setMode(new_mode);
+		console.log(bot.mode);
+	}
+	if(text.match(/add/i)) {
+		bot.mode = !bot.mode ? new djMode() : bot.mode;
+		if (bot.mode.use_queue) {
+			bot.mode.addToQueue(userid);
+			var position = bot.mode.getPositionInLine(userid);
+			myLog("add", "Your position in line: "+position);
+		} else {
+			myLog("add", "There is currently no queue.");
+		}
+	}
 });
